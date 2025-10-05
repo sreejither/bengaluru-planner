@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bengaluru Smart Planner - Vanilla JS Prototype</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <style>
+        body { margin: 0; font-family: Arial, sans-serif; }
+        #map { height: 100vh; width: 70%; float: left; }
+        #sidebar { height: 100vh; width: 30%; float: left; padding: 12px; box-sizing: border-box; background: #fafafa; overflow-y: auto; }
+        .layer-toggle { margin-bottom: 5px; }
+        #year-slider { width: 100%; }
+        #charts-container { display: flex; flex-direction: column; gap: 10px; }
+        #charts-container div { height: 200px; }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div id="sidebar">
+        <h2>Bengaluru Smart Planner — Vanilla JS Prototype</h2>
+        <div>
+            <label>Year: <strong id="year-display">2025</strong></label><br>
+            <input type="range" id="year-slider" min="2000" max="2025" value="2025">
+            <div style="font-size: 12px; color: #666;">Simulate growth for housing/urban planning.</div>
+        </div>
+        <h4>Layers (All Objectives)</h4>
+        <div class="layer-toggle"><label><input type="checkbox" id="show-urban" checked> Urban Growth (Obj 2)</label></div>
+        <div class="layer-toggle"><label><input type="checkbox" id="show-ndvi" checked> NDVI/Food Access (Obj 1)</label></div>
+        <div class="layer-toggle"><label><input type="checkbox" id="show-pop" checked> Population/Housing (Obj 1,2)</label></div>
+        <div class="layer-toggle"><label><input type="checkbox" id="show-waste" checked> Waste Mgmt (Obj 3)</label></div>
+        <div class="layer-toggle"><label><input type="checkbox" id="show-pollution" checked> Air Pollution (Obj 4)</label></div>
+        <div class="layer-toggle"><label><input type="checkbox" id="show-healthcare" checked> Healthcare (Obj 5)</label></div>
+        <div class="layer-toggle"><label><input type="checkbox" id="show-parks" checked> Parks Access (Obj 6)</label></div>
+        <div class="layer-toggle"><label><input type="checkbox" id="show-heat" checked> Heat Islands (Obj 7)</label></div>
+        <div class="layer-toggle"><label><input type="checkbox" id="show-habitat" checked> Habitats (Obj 8)</label></div>
+        <div class="layer-toggle"><label><input type="checkbox" id="show-ag" checked> Agriculture (Obj 9)</label></div>
+        <h4>Key Stats</h4>
+        <div id="stats">Loading...</div>
+        <h4>Charts (NASA-Inspired)</h4>
+        <div id="charts-container">
+            <div id="chart1"></div>
+            <div id="chart2"></div>
+            <div id="chart3"></div>
+            <div id="chart4"></div>
+            <div id="chart5"></div>
+        </div>
+        <h4>Actions</h4>
+        <select id="report-type">
+            <option>General</option><option>Pollution</option><option>Food Access</option><option>Waste</option><option>Heat</option>
+        </select>
+        <button id="export-btn">Export Layers</button>
+        <button id="scenario-btn">Run Scenario</button>
+        <h4>Next Steps for NASA Integration</h4>
+        <ol style="padding-left: 18px; font-size: 12px;">
+            <li>Export Landsat LULC/NDVI, MODIS LST/AOD from GEE as COG/GeoJSON.</li>
+            <li>Load via TileLayer for efficiency; use SEDAC APIs for pop grids.</li>
+            <li>Backend for simulations (e.g., housing impact on NDVI).</li>
+            <li>Stakeholder dashboards: BBMP login for edits, public for reports.</li>
+            <li>Real-time: Ingest Aura/TROPOMI via NASA APIs for pollution/heat alerts.</li>
+        </ol>
+        <div style="font-size: 12px; color: #666;">
+            <strong>Dev Notes:</strong> Expand with Turf.js for spatial analysis (e.g., buffer parks for access).
+        </div>
+    </div>
+
+    <script>
+        // Sample Data (same as React version)
+        const urban2000 = { type: 'FeatureCollection', features: [{ type: 'Feature', properties: { name: 'Bengaluru Core 2000', built: 0.6 }, geometry: { type: 'Polygon', coordinates: [[[77.55, 12.95], [77.62, 12.95], [77.62, 13.01], [77.55, 13.01], [77.55, 12.95]]] } }] };
+        const urban2025 = { type: 'FeatureCollection', features: [{ type: 'Feature', properties: { name: 'Bengaluru Expanded 2025', built: 0.95 }, geometry: { type: 'Polygon', coordinates: [[[77.48, 12.9], [77.68, 12.9], [77.68, 13.05], [77.48, 13.05], [77.48, 12.9]]] } }] };
+        const ndviSample = { type: 'FeatureCollection', features: [{ type: 'Feature', properties: { ndvi: 0.2, name: 'Low green - East' }, geometry: { type: 'Point', coordinates: [77.61, 12.98] } }, { type: 'Feature', properties: { ndvi: 0.6, name: 'Medium green - Central' }, geometry: { type: 'Point', coordinates: [77.57, 12.98] } }, { type: 'Feature', properties: { ndvi: 0.85, name: 'High green - North' }, geometry: { type: 'Point', coordinates: [77.53, 12.98] } }, { type: 'Feature', properties: { ndvi: 0.3, name: 'Urban low - South' }, geometry: { type: 'Point', coordinates: [77.60, 12.92] } }] };
+        const populationSample = [{ id: 1, name: 'Ward A (High Density)', lat: 12.985, lng: 77.58, pop: 35000, density: 12000 }, { id: 2, name: 'Ward B (Medium)', lat: 12.99, lng: 77.62, pop: 48000, density: 8000 }, { id: 3, name: 'Ward C (Low)', lat: 12.97, lng: 77.52, pop: 22000, density: 4000 }, { id: 4, name: 'Ward D (Peri-urban)', lat: 12.95, lng: 77.65, pop: 15000, density: 2000 }];
+        const wasteHotspots = [{ id: 'w1', lat: 12.975, lng: 77.60, name: 'Illegal dump: Zone 5', severity: 'high' }, { id: 'w2', lat: 12.965, lng: 77.54, name: 'Burning site near lake', severity: 'medium' }, { id: 'w3', lat: 12.98, lng: 77.59, name: 'Landfill overload - East', severity: 'high' }];
+        const pollutionHotspots = [{ id: 'p1', lat: 12.976, lng: 77.604, name: 'City Railway Station', aqi: 73, pm25: 21 }, { id: 'p2', lat: 12.965, lng: 77.595, name: 'Hebbal', aqi: 55, pm25: 15 }, { id: 'p3', lat: 12.990, lng: 77.570, name: 'Silicon Valley', aqi: 66, pm25: 20 }, { id: 'p4', lat: 12.950, lng: 77.620, name: 'Electronic City', aqi: 50, pm25: 12 }];
+        const healthcareFacilities = [{ id: 'h1', lat: 12.980, lng: 77.590, name: 'UPHC Central', type: 'Primary' }, { id: 'h2', lat: 12.970, lng: 77.580, name: 'Bowring Hospital', type: 'Secondary' }, { id: 'h3', lat: 12.960, lng: 77.610, name: 'PHC East', type: 'Primary' }, { id: 'h4', lat: 12.990, lng: 77.550, name: 'Victoria Hospital', type: 'Tertiary' }];
+        const parksSample = { type: 'FeatureCollection', features: [{ type: 'Feature', properties: { name: 'Cubbon Park', access: 'High' }, geometry: { type: 'Point', coordinates: [77.585, 12.976] } }, { type: 'Feature', properties: { name: 'Lalbagh', access: 'Medium' }, geometry: { type: 'Point', coordinates: [77.585, 12.950] } }, { type: 'Feature', properties: { name: 'Bannerghatta', access: 'Low' }, geometry: { type: 'Point', coordinates: [77.578, 12.800] } }, { type: 'Feature', properties: { name: 'Neighborhood Park South', access: 'High' }, geometry: { type: 'Point', coordinates: [77.600, 12.920] } }] };
+        const heatHotspots = [{ id: 'heat1', lat: 12.970, lng: 77.600, name: 'UHI Central (6.7°C)', intensity: 6.7 }, { id: 'heat2', lat: 12.980, lng: 77.620, name: 'Industrial North (5.5°C)', intensity: 5.5 }, { id: 'heat3', lat: 12.950, lng: 77.580, name: 'South Expansion (4.0°C)', intensity: 4.0 }];
+        const habitatLoss = { type: 'FeatureCollection', features: [{ type: 'Feature', properties: { name: 'Lost Forest North (86% loss)', loss: 86 }, geometry: { type: 'Polygon', coordinates: [[[77.50, 13.00], [77.55, 13.00], [77.55, 13.05], [77.50, 13.05], [77.50, 13.00]]] } }, { type: 'Feature', properties: { name: 'Peri-urban Fragment (14% remaining)', loss: 14 }, geometry: { type: 'Polygon', coordinates: [[[77.60, 12.90], [77.65, 12.90], [77.65, 12.95], [77.60, 12.95], [77.60, 12.90]]] } }] };
+        const agricultureSample = { type: 'FeatureCollection', features: [{ type: 'Feature', properties: { name: 'Ag Land East (35% remaining)', fertility: 'High' }, geometry: { type: 'Polygon', coordinates: [[[77.65, 12.95], [77.70, 12.95], [77.70, 13.00], [77.65, 13.00], [77.65, 12.95]]] } }, { type: 'Feature', properties: { name: 'Converted South (65% urban)', fertility: 'Low' }, geometry: { type: 'Polygon', coordinates: [[[77.55, 12.85], [77.60, 12.85], [77.60, 12.90], [77.55, 12.90], [77.55, 12.85]]] } }] };
+
+        // Utility Functions
+        function ndviColor(v) { if (v > 0.7) return '#006400'; if (v > 0.4) return '#7CFC00'; if (v > 0.2) return '#FFD700'; return '#D3D3D3'; }
+        function popRadius(pop) { return Math.max(6, Math.min(30, Math.sqrt(pop) / 10)); }
+        function aqiColor(aqi) { if (aqi > 100) return '#FF0000'; if (aqi > 50) return '#FFA500'; return '#00FF00'; }
+        function heatColor(intensity) { return `hsl(${240 - intensity * 30}, 100%, 50%)`; }
+
+        // Initialize Map
+        const map = L.map('map').setView([12.97, 77.59], 11);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap contributors' }).addTo(map);
+
+        // NASA GIBS WMTS Helper (no auth, real-time tiles from NASA servers)
+        function addNASALayer(layerName, title, layerGroup, opacity = 0.7) {
+        const year = document.getElementById('year-slider').value;
+          const timeParam = `${year}-10-05`;  // Fixed to Oct 5 for availability
+        const tileUrl = `https://map1.vis.earthdata.nasa.gov/wmts-geo/wmts.cgi?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=${layerName}&STYLE=default&FORMAT=image/jpeg&TILEMATRIXSET=EPSG4326&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&TIME=${timeParam}`;
+        const tileLayer = L.tileLayer(tileUrl, {
+            tileSize: 256,
+            attribution: 'NASA GIBS / Earthdata',
+            opacity: opacity
+        });
+        tileLayer.addTo(layerGroup);
+        tileLayer.bindPopup(`<b>${title}</b>`);
+        }
+        
+        // Layer Groups
+        const layerGroups = {
+            urban: L.layerGroup(),
+            ndvi: L.layerGroup(),
+            pop: L.layerGroup(),
+            waste: L.layerGroup(),
+            pollution: L.layerGroup(),
+            healthcare: L.layerGroup(),
+            parks: L.layerGroup(),
+            heat: L.layerGroup(),
+            habitat: L.layerGroup(),
+            ag: L.layerGroup(),
+            reports: L.layerGroup()
+        };
+
+        // Add Layers Function
+        function addLayers() {
+            // Urban Growth Layer (Obj 2)
+            layerGroups.urban.clearLayers();
+            if (document.getElementById('show-urban').checked) {
+            addNASALayer('MODIS_Terra_CorrectedReflectance_TrueColor', 'NASA MODIS True Color Urban View', layerGroups.urban);
+            layerGroups.urban.addTo(map);
+            }
+
+            // NDVI Layer (Vegetation for Food Access - Obj 1)
+            layerGroups.ndvi.clearLayers();
+            if (document.getElementById('show-ndvi').checked) {
+            addNASALayer('MODIS_Terra_Vegetation_Indices_16_Days_NDVI', 'NASA MODIS NDVI (Greenness) - Oct 2025', layerGroups.ndvi);
+            layerGroups.ndvi.addTo(map);
+            }
+
+            // Population
+            layerGroups.pop.clearLayers();
+            if (document.getElementById('show-pop').checked) {
+                populationSample.forEach(p => {
+                    L.circleMarker([p.lat, p.lng], { radius: popRadius(p.pop), color: '#1E90FF', fillOpacity: 0.6 })
+                        .bindPopup(`<div><strong>${p.name}</strong><div>Pop: ${p.pop.toLocaleString()} (Density: ${p.density}/km²)</div></div>`)
+                        .addTo(layerGroups.pop);
+                });
+                layerGroups.pop.addTo(map);
+            }
+
+            // Waste
+            layerGroups.waste.clearLayers();
+            if (document.getElementById('show-waste').checked) {
+                wasteHotspots.forEach(w => {
+                    L.marker([w.lat, w.lng]).bindPopup(`<div><strong>${w.name}</strong><div>Severity: ${w.severity}</div></div>`).addTo(layerGroups.waste);
+                });
+                layerGroups.waste.addTo(map);
+            }
+
+            // Pollution
+            layerGroups.pollution.clearLayers();
+            if (document.getElementById('show-pollution').checked) {
+                pollutionHotspots.forEach(p => {
+                    L.circleMarker([p.lat, p.lng], { radius: p.pm25 * 2, color: aqiColor(p.aqi), fillOpacity: 0.5 })
+                        .bindPopup(`<div><strong>${p.name}</strong><div>AQI: ${p.aqi} (PM2.5: ${p.pm25}µg/m³)</div></div>`)
+                        .addTo(layerGroups.pollution);
+                });
+                layerGroups.pollution.addTo(map);
+            }
+
+            // Healthcare
+            layerGroups.healthcare.clearLayers();
+            if (document.getElementById('show-healthcare').checked) {
+                healthcareFacilities.forEach(h => {
+                    L.marker([h.lat, h.lng]).bindPopup(`<div><strong>${h.name}</strong><div>Type: ${h.type}</div></div>`).addTo(layerGroups.healthcare);
+                });
+                layerGroups.healthcare.addTo(map);
+            }
+
+            // Parks
+            layerGroups.parks.clearLayers();
+            if (document.getElementById('show-parks').checked) {
+                parksSample.features.forEach(f => {
+                    L.circleMarker([f.geometry.coordinates[1], f.geometry.coordinates[0]], { radius: 10, color: '#228B22', fillOpacity: 0.7 })
+                        .bindPopup(`<div><strong>${f.properties.name}</strong><div>Access: ${f.properties.access}</div></div>`)
+                        .addTo(layerGroups.parks);
+                });
+                layerGroups.parks.addTo(map);
+            }
+
+           // Heat Layer (Obj 7)
+            layerGroups.heat.clearLayers();
+            if (document.getElementById('show-heat').checked) {
+            addNASALayer('MODIS_Terra_Land_Surface_Temp_Day', 'NASA MODIS Land Surface Temp (Heat Islands)', layerGroups.heat, 0.5);
+            layerGroups.heat.addTo(map);
+            }
+
+            // Habitats/Ag Layer (Obj 8/9)
+            layerGroups.habitat.clearLayers();  // Or layerGroups.ag if separate
+            if (document.getElementById('show-habitat').checked || document.getElementById('show-ag').checked) { 
+            addNASALayer('VIIRS_SNPP_CorrectedReflectance_TrueColor', 'NASA VIIRS True Color (Habitats/Growth)', layerGroups.habitat);
+            layerGroups.habitat.addTo(map);
+            }
+
+            // Agriculture
+            layerGroups.ag.clearLayers();
+            if (document.getElementById('show-ag').checked) {
+                L.geoJSON(agricultureSample, { style: f => ({ color: '#228B22', weight: 2, fillOpacity: 0.3, fillColor: f.properties.fertility === 'High' ? '#32CD32' : '#90EE90' }) }).addTo(layerGroups.ag);
+                layerGroups.ag.addTo(map);
+            }
+
+            // Reports
+            layerGroups.reports.clearLayers();
+            reports.forEach(r => {
+                L.marker([r.lat, r.lng]).bindPopup(`<div><strong>${r.note}</strong><div>Lat: ${r.lat.toFixed(5)}, Lng: ${r.lng.toFixed(5)}</div></div>`).addTo(layerGroups.reports);
+            });
+            layerGroups.reports.addTo(map);
+        }
+
+        // Event Listeners
+        document.addEventListener('DOMContentLoaded', () => {
+            // Year Slider
+            const slider = document.getElementById('year-slider');
+            const display = document.getElementById('year-display');
+            slider.addEventListener('input', (e) => {
+                display.textContent = e.target.value;
+                addLayers();
+            });
+
+            // Layer Toggles
+            ['urban', 'ndvi', 'pop', 'waste', 'pollution', 'healthcare', 'parks', 'heat', 'habitat', 'ag'].forEach(id => {
+                document.getElementById(`show-${id}`).addEventListener('change', addLayers);
+            });
+
+            // Map Click for Reports
+            map.on('click', (e) => {
+                const reportType = document.getElementById('report-type').value;
+                const newReport = { id: Date.now(), lat: e.latlng.lat, lng: e.latlng.lng, note: `Community report: ${reportType}`, type: reportType };
+                reports.push(newReport);
+                addLayers();
+                updateStats();
+            });
+
+            // Buttons
+            document.getElementById('export-btn').addEventListener('click', () => alert('Export GeoJSON (demo)'));
+            document.getElementById('scenario-btn').addEventListener('click', () => alert('Simulate Scenario (e.g., new housing) - Demo'));
+
+            // Charts
+            Plotly.newPlot('chart1', [{ x: [2000, 2010, 2020, 2025], y: [462, 620, 740, 868], type: 'scatter', mode: 'lines+markers', name: 'Built Area (km²)' }], { width: 320, height: 200, title: 'Urban Growth (Landsat)' });
+            Plotly.newPlot('chart2', [{ x: ['Central', 'East', 'North', 'South', 'West'], y: [42, 66, 55, 50, 45], type: 'bar', name: 'AQI' }], { width: 320, height: 200, title: 'Air Quality (Aura)' });
+            Plotly.newPlot('chart3', [{ x: [1973, 2000, 2025], y: [2.5, 4.0, 6.7], type: 'scatter', mode: 'lines+markers', name: 'UHI (°C)' }], { width: 320, height: 200, title: 'Heat Trends (MODIS)' });
+            Plotly.newPlot('chart4', [{ labels: ['Remaining', 'Lost'], values: [14, 86], type: 'pie', name: 'Forest %' }], { width: 320, height: 200, title: 'Habitat Loss (Landsat)' });
+            Plotly.newPlot('chart5', [{ x: ['Ag Pre-2025', 'Mixed 2025'], y: [35, 65], type: 'bar', name: '% Land' }], { width: 320, height: 200, title: 'Ag Shift (SEDAC)' });
+
+            // Initial Load
+            addLayers();
+            updateStats();
+        });
+
+        // Reports Array
+        let reports = [];
+
+        // Update Stats
+        function updateStats() {
+            const totalPop = populationSample.reduce((s, p) => s + p.pop, 0);
+            const avgNDVI = ndviSample.features.reduce((s, f) => s + f.properties.ndvi, 0) / ndviSample.features.length;
+            const avgAQI = pollutionHotspots.reduce((s, p) => s + p.aqi, 0) / pollutionHotspots.length;
+            const totalParks = parksSample.features.length;
+            const avgHeat = heatHotspots.reduce((s, h) => s + h.intensity, 0) / heatHotspots.length;
+            document.getElementById('stats').innerHTML = `
+                <div>Total Population: <strong>${totalPop.toLocaleString()}</strong></div>
+                <div>Avg NDVI: <strong>${avgNDVI.toFixed(2)}</strong></div>
+                <div>Avg AQI: <strong>${avgAQI.toFixed(0)}</strong></div>
+                <div>Total Parks: <strong>${totalParks}</strong></div>
+                <div>Avg Heat Intensity: <strong>${avgHeat.toFixed(1)}°C</strong></div>
+                <div>Reports: <strong>${reports.length}</strong></div>
+            `;
+        }
+    </script>
+</body>
+</html>
